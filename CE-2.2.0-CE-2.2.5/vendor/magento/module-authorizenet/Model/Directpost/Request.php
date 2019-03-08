@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2013-2017 Magento, Inc. All rights reserved.
+ * Copyright © Magento, Inc. All rights reserved.
  * See COPYING.txt for license details.
  */
 
@@ -20,7 +20,7 @@ class Request extends AuthorizenetRequest
     protected $_transKey = null;
 
     /**
-     * Hexadecimal signature key.
+     * Hexadecimal signature key meet.
      *
      * @var string
      */
@@ -60,8 +60,35 @@ class Request extends AuthorizenetRequest
             ->setXMethod(\Magento\Authorizenet\Model\Authorizenet::REQUEST_METHOD_CC)
             ->setXRelayUrl($paymentMethod->getRelayUrl());
 
+        $this->_setTransactionKey($paymentMethod->getConfigData('trans_key'));
         $this->setSignatureKey($paymentMethod->getConfigData('signature_key'));
         return $this;
+    }
+
+    /**
+     * Set merchant transaction key.
+     * Needed to generate sign.
+     *
+     * @param string $transKey
+     * @return $this
+     */
+    protected function _setTransactionKey($transKey)
+    {
+        $this->_transKey = $transKey;
+        return $this;
+    }
+
+    /**
+     * Set merchant hexadecimal signature key.
+     *
+     * Needed to generate SHA2 sign.
+     *
+     * @param string $signatureKey
+     * @return void
+     */
+    private function setSignatureKey(string $signatureKey)
+    {
+        $this->signatureKey = $signatureKey;
     }
 
     /**
@@ -100,7 +127,7 @@ class Request extends AuthorizenetRequest
                 ->setXCity(strval($billing->getCity()))
                 ->setXState(strval($billing->getRegion()))
                 ->setXZip(strval($billing->getPostcode()))
-                ->setXCountry(strval($billing->getCountry()))
+                ->setXCountry(strval($billing->getCountryId()))
                 ->setXPhone(strval($billing->getTelephone()))
                 ->setXFax(strval($billing->getFax()))
                 ->setXCustId(strval($billing->getCustomerId()))
@@ -128,7 +155,7 @@ class Request extends AuthorizenetRequest
             )->setXShipToZip(
                 strval($shipping->getPostcode())
             )->setXShipToCountry(
-                strval($shipping->getCountry())
+                strval($shipping->getCountryId())
             );
         }
 
@@ -167,12 +194,22 @@ class Request extends AuthorizenetRequest
                 $fpTimestamp
             );
         }
-
         $this->setXFpTimestamp($fpTimestamp);
         $this->setXFpHash($hash);
         return $this;
     }
 
+    /**
+     * Return merchant hexadecimal signature key.
+     *
+     * Needed to generate SHA2 sign.
+     *
+     * @return string
+     */
+    private function getSignatureKey(): string
+    {
+        return $this->signatureKey;
+    }
 
     /**
      * Generates the SHA2 fingerprint for request.
@@ -192,35 +229,11 @@ class Request extends AuthorizenetRequest
         $currencyCode,
         $fpSequence,
         $fpTimestamp
-    ): string {
+    ): string
+    {
         $message = $merchantApiLoginId . '^' . $fpSequence . '^' . $fpTimestamp . '^' . $amount . '^' . $currencyCode;
 
         return strtoupper(hash_hmac('sha512', $message, pack('H*', $merchantSignatureKey)));
-    }
-
-    /**
-     * Return merchant hexadecimal signature key.
-     *
-     * Needed to generate SHA2 sign.
-     *
-     * @return string
-     */
-    private function getSignatureKey(): string
-    {
-           return $this->signatureKey;
-    }
-
-    /**
-     * Set merchant hexadecimal signature key.
-     *
-     * Needed to generate SHA2 sign.
-     *
-     * @param string $signatureKey
-     * @return void
-     */
-    private function setSignatureKey(string $signatureKey)
-    {
-        $this->signatureKey = $signatureKey;
     }
 
     /**
@@ -252,25 +265,12 @@ class Request extends AuthorizenetRequest
 
     /**
      * Return merchant transaction key.
-     * Needed to generate MD5 sign.
+     * Needed to generate sign.
      *
      * @return string
      */
     protected function _getTransactionKey()
     {
         return $this->_transKey;
-    }
-
-    /**
-     * Set merchant transaction key.
-     * Needed to generate MD5 sign.
-     *
-     * @param string $transKey
-     * @return $this
-     */
-    protected function _setTransactionKey($transKey)
-    {
-        $this->_transKey = $transKey;
-        return $this;
     }
 }

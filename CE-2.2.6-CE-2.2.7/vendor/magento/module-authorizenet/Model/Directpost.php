@@ -1,15 +1,14 @@
 <?php
 /**
- * Copyright © 2013-2017 Magento, Inc. All rights reserved.
+ * Copyright © Magento, Inc. All rights reserved.
  * See COPYING.txt for license details.
  */
 
 namespace Magento\Authorizenet\Model;
 
-use Magento\Framework\HTTP\ZendClientFactory;
+use Magento\Framework\App\ObjectManager;
 use Magento\Payment\Model\Method\ConfigInterface;
 use Magento\Payment\Model\Method\TransparentInterface;
-use Magento\Sales\Model\Order\Email\Sender\OrderSender;
 
 /**
  * Authorize.net DirectPost payment method model.
@@ -24,12 +23,12 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     /**
      * @var string
      */
-    protected $_formBlockType = 'Magento\Payment\Block\Transparent\Info';
+    protected $_formBlockType = \Magento\Payment\Block\Transparent\Info::class;
 
     /**
      * @var string
      */
-    protected $_infoBlockType = 'Magento\Payment\Block\Info';
+    protected $_infoBlockType = \Magento\Payment\Block\Info::class;
 
     /**
      * Payment Method feature
@@ -103,7 +102,7 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     protected $response;
 
     /**
-     * @var OrderSender
+     * @var \Magento\Sales\Model\Order\Email\Sender\OrderSender
      */
     protected $orderSender;
 
@@ -125,6 +124,16 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     private $psrLogger;
 
     /**
+     * @var \Magento\Sales\Api\PaymentFailuresInterface
+     */
+    private $paymentFailures;
+
+    /**
+     * @var \Magento\Sales\Model\Order
+     */
+    private $order;
+
+    /**
      * @param \Magento\Framework\Model\Context $context
      * @param \Magento\Framework\Registry $registry
      * @param \Magento\Framework\Api\ExtensionAttributesFactory $extensionFactory
@@ -142,11 +151,12 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
      * @param \Magento\Sales\Model\OrderFactory $orderFactory
      * @param \Magento\Store\Model\StoreManagerInterface $storeManager
      * @param \Magento\Quote\Api\CartRepositoryInterface $quoteRepository
-     * @param OrderSender $orderSender
+     * @param \Magento\Sales\Model\Order\Email\Sender\OrderSender $orderSender
      * @param \Magento\Sales\Api\TransactionRepositoryInterface $transactionRepository
      * @param \Magento\Framework\Model\ResourceModel\AbstractResource $resource
      * @param \Magento\Framework\Data\Collection\AbstractDb $resourceCollection
      * @param array $data
+     * @param \Magento\Sales\Api\PaymentFailuresInterface|null $paymentFailures
      * @SuppressWarnings(PHPMD.ExcessiveParameterList)
      */
     public function __construct(
@@ -163,7 +173,7 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
         \Magento\Authorizenet\Model\Directpost\Request\Factory $requestFactory,
         \Magento\Authorizenet\Model\Directpost\Response\Factory $responseFactory,
         TransactionService $transactionService,
-        ZendClientFactory $httpClientFactory,
+        \Magento\Framework\HTTP\ZendClientFactory $httpClientFactory,
         \Magento\Sales\Model\OrderFactory $orderFactory,
         \Magento\Store\Model\StoreManagerInterface $storeManager,
         \Magento\Quote\Api\CartRepositoryInterface $quoteRepository,
@@ -171,7 +181,8 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
         \Magento\Sales\Api\TransactionRepositoryInterface $transactionRepository,
         \Magento\Framework\Model\ResourceModel\AbstractResource $resource = null,
         \Magento\Framework\Data\Collection\AbstractDb $resourceCollection = null,
-        array $data = []
+        array $data = [],
+        \Magento\Sales\Api\PaymentFailuresInterface $paymentFailures = null
     )
     {
         $this->orderFactory = $orderFactory;
@@ -181,6 +192,8 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
         $this->orderSender = $orderSender;
         $this->transactionRepository = $transactionRepository;
         $this->_code = static::METHOD_CODE;
+        $this->paymentFailures = $paymentFailures ?: ObjectManager::getInstance()
+            ->get(\Magento\Sales\Api\PaymentFailuresInterface::class);
 
         parent::__construct(
             $context,
@@ -270,6 +283,32 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
+     * Return additional information`s transaction_id value of parent transaction model
+     *
+     * @param \Magento\Sales\Model\Order\Payment $payment
+     * @return string
+     */
+    protected function getRealParentTransactionId($payment)
+    {
+        $transaction = $this->transactionRepository->getByTransactionId(
+            $payment->getParentTransactionId(),
+            $payment->getId(),
+            $payment->getOrder()->getId()
+        );
+        return $transaction->getAdditionalInformation(self::REAL_TRANSACTION_ID_KEY);
+    }
+
+    /**
+     * Return response.
+     *
+     * @return \Magento\Authorizenet\Model\Directpost\Response
+     */
+    public function getResponse()
+    {
+        return $this->response;
+    }
+
+    /**
      * Process capture request
      *
      * @param \Magento\Authorizenet\Model\Directpost\Response $result
@@ -282,8 +321,7 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
         switch ($result->getXResponseCode()) {
             case self::RESPONSE_CODE_APPROVED:
             case self::RESPONSE_CODE_HELD:
-                if (
-                in_array(
+                if (in_array(
                     $result->getXResponseReasonCode(),
                     [
                         self::RESPONSE_REASON_CODE_APPROVED,
@@ -457,16 +495,6 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
-     * Return response.
-     *
-     * @return \Magento\Authorizenet\Model\Directpost\Response
-     */
-    public function getResponse()
-    {
-        return $this->response;
-    }
-
-    /**
      * Instantiate state and set it to state object
      *
      * @param string $paymentAction
@@ -514,38 +542,6 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
-     * Fill response with data.
-     *
-     * @param array $postData
-     * @return $this
-     */
-    public function setResponseData(array $postData)
-    {
-        $this->getResponse()->setData($postData);
-        return $this;
-    }
-
-    /**
-     * Validate response data. Needed in controllers.
-     *
-     * @return bool true in case of validation success.
-     * @throws \Magento\Framework\Exception\LocalizedException In case of validation error
-     */
-    public function validateResponse()
-    {
-        $response = $this->getResponse();
-        $hashConfigKey = !empty($response->getData('x_SHA2_Hash')) ? 'signature_key' : 'trans_md5';
-        //hash check
-        if (!$response->isValidHash($this->getConfigData($hashConfigKey), $this->getConfigData('login'))
-        ) {
-            throw new \Magento\Framework\Exception\LocalizedException(
-                __('The transaction was declined because the response hash validation failed.')
-            );
-        }
-        return true;
-    }
-
-    /**
      * Operate with order using data from $_POST which came from authorize.net by Relay URL.
      *
      * @param array $responseData data from Authorize.net from $_POST
@@ -563,13 +559,10 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
         $this->validateResponse();
 
         $response = $this->getResponse();
-        //operate with order
-        $orderIncrementId = $response->getXInvoiceNum();
         $responseText = $this->dataHelper->wrapGatewayError($response->getXResponseReasonText());
         $isError = false;
-        if ($orderIncrementId) {
-            /* @var $order \Magento\Sales\Model\Order */
-            $order = $this->orderFactory->create()->loadByIncrementId($orderIncrementId);
+        if ($this->getOrderIncrementId()) {
+            $order = $this->getOrderFromResponse();
             //check payment method
             $payment = $order->getPayment();
             if (!$payment || $payment->getMethod() != $this->getCode()) {
@@ -596,79 +589,65 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
-     * Fill payment with credit card data from response from Authorize.net.
+     * Fill response with data.
      *
-     * @param \Magento\Framework\DataObject $payment
-     * @return void
+     * @param array $postData
+     * @return $this
      */
-    protected function fillPaymentByResponse(\Magento\Framework\DataObject $payment)
+    public function setResponseData(array $postData)
+    {
+        $this->getResponse()->setData($postData);
+        return $this;
+    }
+
+    /**
+     * Validate response data. Needed in controllers.meet
+     *
+     * @return bool true in case of validation success.
+     * @throws \Magento\Framework\Exception\LocalizedException In case of validation error
+     */
+    public function validateResponse()
     {
         $response = $this->getResponse();
-        $payment->setTransactionId($response->getXTransId())
-            ->setParentTransactionId(null)
-            ->setIsTransactionClosed(0)
-            ->setTransactionAdditionalInfo(self::REAL_TRANSACTION_ID_KEY, $response->getXTransId());
+        $hashConfigKey = !empty($response->getData('x_SHA2_Hash')) ? 'signature_key' : 'trans_md5';
 
-        if ($response->getXMethod() == self::REQUEST_METHOD_CC) {
-            $payment->setCcAvsStatus($response->getXAvsCode())
-                ->setCcLast4($payment->encrypt(substr($response->getXAccountNumber(), -4)));
-        }
-
-        if ($response->getXResponseCode() == self::RESPONSE_CODE_HELD) {
-            $payment->setIsTransactionPending(true)
-                ->setIsFraudDetected(true);
-        }
-    }
-
-    /**
-     * Check response code came from Authorize.net.
-     *
-     * @return true in case of Approved response
-     * @throws \Magento\Framework\Exception\LocalizedException In case of Declined or Error response from Authorize.net
-     */
-    public function checkResponseCode()
-    {
-        switch ($this->getResponse()->getXResponseCode()) {
-            case self::RESPONSE_CODE_APPROVED:
-            case self::RESPONSE_CODE_HELD:
-                return true;
-            case self::RESPONSE_CODE_DECLINED:
-            case self::RESPONSE_CODE_ERROR:
-                throw new \Magento\Framework\Exception\LocalizedException(
-                    $this->dataHelper->wrapGatewayError($this->getResponse()->getXResponseReasonText())
-                );
-            default:
-                throw new \Magento\Framework\Exception\LocalizedException(
-                    __('There was a payment authorization error.')
-                );
-        }
-    }
-
-    /**
-     * Check transaction id came from Authorize.net
-     *
-     * @return true in case of right transaction id
-     * @throws \Magento\Framework\Exception\LocalizedException In case of bad transaction id.
-     */
-    public function checkTransId()
-    {
-        if (!$this->getResponse()->getXTransId()) {
+        //hash check meet
+        if (!$response->isValidHash($this->getConfigData($hashConfigKey), $this->getConfigData('login'))
+        ) {
             throw new \Magento\Framework\Exception\LocalizedException(
-                __('Please enter a transaction ID to authorize this payment.')
+                __('The transaction was declined because the response hash validation failed.')
             );
         }
+
         return true;
     }
 
     /**
-     * Compare amount with amount from the response from Authorize.net.
+     * Fetch order increment id from response.
      *
-     * @param float $amount
-     * @return bool
+     * @return string
      */
-    protected function matchAmount($amount)
+    private function getOrderIncrementId(): string
     {
-        return sprintf('%.2F', $amount) == sprintf('%.2F', $this->getResponse()->getXAmount());
+        return $this->getResponse()->getXInvoiceNum();
+    }
+
+    /**
+     * Fetch order by increment id from response.
+     *
+     * @return \Magento\Sales\Model\Order
+     */
+    private function getOrderFromResponse(): \Magento\Sales\Model\Order
+    {
+        if (!$this->order) {
+            $this->order = $this->orderFactory->create();
+
+            if ($incrementId = $this->getOrderIncrementId()) {
+                $this->order = $this->order->loadByIncrementId($incrementId);
+            }
+        }
+
+        return $this->order;
     }
 
     /**
@@ -729,6 +708,114 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
+     * Check response code came from Authorize.net.
+     *
+     * @return true in case of Approved response
+     * @throws \Magento\Framework\Exception\LocalizedException In case of Declined or Error response from Authorize.net
+     */
+    public function checkResponseCode()
+    {
+        switch ($this->getResponse()->getXResponseCode()) {
+            case self::RESPONSE_CODE_APPROVED:
+            case self::RESPONSE_CODE_HELD:
+                return true;
+            case self::RESPONSE_CODE_DECLINED:
+            case self::RESPONSE_CODE_ERROR:
+                $errorMessage = $this->dataHelper->wrapGatewayError($this->getResponse()->getXResponseReasonText());
+                $order = $this->getOrderFromResponse();
+                $this->paymentFailures->handle((int)$order->getQuoteId(), $errorMessage);
+                throw new \Magento\Framework\Exception\LocalizedException($errorMessage);
+            default:
+                throw new \Magento\Framework\Exception\LocalizedException(
+                    __('There was a payment authorization error.')
+                );
+        }
+    }
+
+    /**
+     * Check transaction id came from Authorize.net
+     *
+     * @return true in case of right transaction id
+     * @throws \Magento\Framework\Exception\LocalizedException In case of bad transaction id.
+     */
+    public function checkTransId()
+    {
+        if (!$this->getResponse()->getXTransId()) {
+            throw new \Magento\Framework\Exception\LocalizedException(
+                __('Please enter a transaction ID to authorize this payment.')
+            );
+        }
+        return true;
+    }
+
+    /**
+     * Register order cancellation. Return money to customer if needed.
+     *
+     * @param \Magento\Sales\Model\Order $order
+     * @param string $message
+     * @param bool $voidPayment
+     * @return void
+     */
+    protected function declineOrder(\Magento\Sales\Model\Order $order, $message = '', $voidPayment = true)
+    {
+        try {
+            $response = $this->getResponse();
+            if ($voidPayment
+                && $response->getXTransId()
+                && strtoupper($response->getXType()) == self::REQUEST_TYPE_AUTH_ONLY
+            ) {
+                $order->getPayment()
+                    ->setTransactionId(null)
+                    ->setParentTransactionId($response->getXTransId())
+                    ->void($response);
+            }
+            $order->registerCancellation($message)->save();
+        } catch (\Exception $e) {
+            //quiet decline
+            $this->getPsrLogger()->critical($e);
+        }
+    }
+
+    /**
+     * @return \Psr\Log\LoggerInterface
+     *
+     * @deprecated 100.1.0
+     */
+    private function getPsrLogger()
+    {
+        if (null === $this->psrLogger) {
+            $this->psrLogger = ObjectManager::getInstance()
+                ->get(\Psr\Log\LoggerInterface::class);
+        }
+        return $this->psrLogger;
+    }
+
+    /**
+     * Fill payment with credit card data from response from Authorize.net.
+     *
+     * @param \Magento\Framework\DataObject $payment
+     * @return void
+     */
+    protected function fillPaymentByResponse(\Magento\Framework\DataObject $payment)
+    {
+        $response = $this->getResponse();
+        $payment->setTransactionId($response->getXTransId())
+            ->setParentTransactionId(null)
+            ->setIsTransactionClosed(0)
+            ->setTransactionAdditionalInfo(self::REAL_TRANSACTION_ID_KEY, $response->getXTransId());
+
+        if ($response->getXMethod() == self::REQUEST_METHOD_CC) {
+            $payment->setCcAvsStatus($response->getXAvsCode())
+                ->setCcLast4($payment->encrypt(substr($response->getXAccountNumber(), -4)));
+        }
+
+        if ($response->getXResponseCode() == self::RESPONSE_CODE_HELD) {
+            $payment->setIsTransactionPending(true)
+                ->setIsFraudDetected(true);
+        }
+    }
+
+    /**
      * Process fraud status
      *
      * @param \Magento\Sales\Model\Order\Payment $payment
@@ -746,13 +833,29 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
                 return $this;
             }
 
-            $payment->setIsFraudDetected(true);
+            $fdsFilterAction = (string)$fraudDetailsResponse->getFdsFilterAction();
+            if ($this->fdsFilterActionIsReportOnly($fdsFilterAction) === false) {
+                $payment->setIsFraudDetected(true);
+            }
+
             $payment->setAdditionalInformation('fraud_details', $fraudData);
         } catch (\Exception $e) {
             //this request is optional
         }
 
         return $this;
+    }
+
+    /**
+     * Checks if filter action is Report Only. Transactions that trigger this filter are processed as normal,
+     * but are also reported in the Merchant Interface as triggering this filter.
+     *
+     * @param string $fdsFilterAction
+     * @return bool
+     */
+    private function fdsFilterActionIsReportOnly($fdsFilterAction)
+    {
+        return $fdsFilterAction === (string)$this->dataHelper->getFdsFilterActionLabel('report');
     }
 
     /**
@@ -790,44 +893,14 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
-     * Register order cancellation. Return money to customer if needed.
+     * Compare amount with amount from the response from Authorize.net.
      *
-     * @param \Magento\Sales\Model\Order $order
-     * @param string $message
-     * @param bool $voidPayment
-     * @return void
+     * @param float $amount
+     * @return bool
      */
-    protected function declineOrder(\Magento\Sales\Model\Order $order, $message = '', $voidPayment = true)
+    protected function matchAmount($amount)
     {
-        try {
-            $response = $this->getResponse();
-            if (
-                $voidPayment && $response->getXTransId() && strtoupper($response->getXType())
-                == self::REQUEST_TYPE_AUTH_ONLY
-            ) {
-                $order->getPayment()->setTransactionId(null)->setParentTransactionId($response->getXTransId())->void();
-            }
-            $order->registerCancellation($message)->save();
-        } catch (\Exception $e) {
-            //quiet decline
-            $this->getPsrLogger()->critical($e);
-        }
-    }
-
-    /**
-     * Return additional information`s transaction_id value of parent transaction model
-     *
-     * @param \Magento\Sales\Model\Order\Payment $payment
-     * @return string
-     */
-    protected function getRealParentTransactionId($payment)
-    {
-        $transaction = $this->transactionRepository->getByTransactionId(
-            $payment->getParentTransactionId(),
-            $payment->getId(),
-            $payment->getOrder()->getId()
-        );
-        return $transaction->getAdditionalInformation(self::REAL_TRANSACTION_ID_KEY);
+        return sprintf('%.2F', $amount) == sprintf('%.2F', $this->getResponse()->getXAmount());
     }
 
     /**
@@ -906,6 +979,27 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
     }
 
     /**
+     * This function returns full transaction details for a specified transaction ID.
+     *
+     * @param string $transactionId
+     * @return \Magento\Framework\DataObject
+     * @throws \Magento\Framework\Exception\LocalizedException
+     * @link http://www.authorize.net/support/ReportingGuide_XML.pdf
+     * @link http://developer.authorize.net/api/transaction_details/
+     */
+    protected function getTransactionResponse($transactionId)
+    {
+        $responseXmlDocument = $this->transactionService->getTransactionDetails($this, $transactionId);
+
+        $response = new \Magento\Framework\DataObject();
+        $response->setXResponseCode((string)$responseXmlDocument->transaction->responseCode)
+            ->setXResponseReasonCode((string)$responseXmlDocument->transaction->responseReasonCode)
+            ->setTransactionStatus((string)$responseXmlDocument->transaction->transactionStatus);
+
+        return $response;
+    }
+
+    /**
      * @param \Magento\Sales\Model\Order\Payment $payment
      * @param \Magento\Framework\DataObject $response
      * @param string $transactionId
@@ -957,40 +1051,5 @@ class Directpost extends \Magento\Authorizenet\Model\Authorizenet implements Tra
      */
     public function setPathPattern($pathPattern)
     {
-    }
-
-    /**
-     * This function returns full transaction details for a specified transaction ID.
-     *
-     * @param string $transactionId
-     * @return \Magento\Framework\DataObject
-     * @throws \Magento\Framework\Exception\LocalizedException
-     * @link http://www.authorize.net/support/ReportingGuide_XML.pdf
-     * @link http://developer.authorize.net/api/transaction_details/
-     */
-    protected function getTransactionResponse($transactionId)
-    {
-        $responseXmlDocument = $this->transactionService->getTransactionDetails($this, $transactionId);
-
-        $response = new \Magento\Framework\DataObject();
-        $response->setXResponseCode((string)$responseXmlDocument->transaction->responseCode)
-            ->setXResponseReasonCode((string)$responseXmlDocument->transaction->responseReasonCode)
-            ->setTransactionStatus((string)$responseXmlDocument->transaction->transactionStatus);
-
-        return $response;
-    }
-
-    /**
-     * @return \Psr\Log\LoggerInterface
-     *
-     * @deprecated
-     */
-    private function getPsrLogger()
-    {
-        if (null === $this->psrLogger) {
-            $this->psrLogger = \Magento\Framework\App\ObjectManager::getInstance()
-                ->get(\Psr\Log\LoggerInterface::class);
-        }
-        return $this->psrLogger;
     }
 }

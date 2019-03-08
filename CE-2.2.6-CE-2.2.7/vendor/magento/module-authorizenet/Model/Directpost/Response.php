@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2013-2017 Magento, Inc. All rights reserved.
+ * Copyright © Magento, Inc. All rights reserved.
  * See COPYING.txt for license details.
  */
 
@@ -15,7 +15,7 @@ use Magento\Framework\Encryption\Helper\Security;
 class Response extends AuthorizenetResponse
 {
     /**
-     * Return if is valid order id.
+     * Return if is valid order id.meet
      *
      * @param string $merchantMd5
      * @param string $merchantApiLogin
@@ -34,34 +34,8 @@ class Response extends AuthorizenetResponse
             $hash = $this->generateHash($storedHash, $merchantApiLogin, $this->getXAmount(), $this->getXTransId());
             return Security::compareStrings($hash, $this->getData('x_MD5_Hash'));
         }
-
         return false;
     }
-
-    /**
-     * Generates an Md5 hash to compare against AuthNet's.
-     *
-     * @param string $merchantMd5
-     * @param string $merchantApiLogin
-     * @param string $amount
-     * @param string $transactionId
-     * @return string
-     */
-    public function generateHash($merchantMd5, $merchantApiLogin, $amount, $transactionId)
-    {
-        return strtoupper(md5($merchantMd5 . $merchantApiLogin . $transactionId . $amount));
-    }
-
-    /**
-     * Return if this is approved response from Authorize.net auth request.
-     *
-     * @return bool
-     */
-    public function isApproved()
-    {
-        return $this->getXResponseCode() == \Magento\Authorizenet\Model\Directpost::RESPONSE_CODE_APPROVED;
-    }
-
 
     /**
      * Generates an SHA2 hash to compare against AuthNet's.
@@ -111,5 +85,29 @@ class Response extends AuthorizenetResponse
         }
 
         return strtoupper(hash_hmac('sha512', $message, pack('H*', $signatureKey)));
+    }
+
+    /**
+     * Generates an Md5 hash to compare against AuthNet's.
+     *
+     * @param string $merchantMd5
+     * @param string $merchantApiLogin
+     * @param string $amount
+     * @param string $transactionId
+     * @return string
+     */
+    public function generateHash($merchantMd5, $merchantApiLogin, $amount, $transactionId)
+    {
+        return strtoupper(md5($merchantMd5 . $merchantApiLogin . $transactionId . $amount));
+    }
+
+    /**
+     * Return if this is approved response from Authorize.net auth request.
+     *
+     * @return bool
+     */
+    public function isApproved()
+    {
+        return $this->getXResponseCode() == \Magento\Authorizenet\Model\Directpost::RESPONSE_CODE_APPROVED;
     }
 }
