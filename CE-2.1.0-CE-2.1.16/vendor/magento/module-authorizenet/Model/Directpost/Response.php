@@ -1,8 +1,9 @@
 <?php
 /**
- * Copyright © Magento, Inc. All rights reserved.
+ * Copyright © 2013-2017 Magento, Inc. All rights reserved.
  * See COPYING.txt for license details.
  */
+
 namespace Magento\Authorizenet\Model\Directpost;
 
 use Magento\Authorizenet\Model\Response as AuthorizenetResponse;
@@ -14,6 +15,30 @@ use Magento\Framework\Encryption\Helper\Security;
 class Response extends AuthorizenetResponse
 {
     /**
+     * Return if is valid order id.
+     *
+     * @param string $merchantMd5
+     * @param string $merchantApiLogin
+     * @return bool
+     */
+    public function isValidHash($storedHash, $merchantApiLogin)
+    {
+        if (empty($this->getData('x_amount'))) {
+            $this->setData('x_amount', '0.00');
+        }
+
+        if (!empty($this->getData('x_SHA2_Hash'))) {
+            $hash = $this->generateSha2Hash($storedHash);
+            return Security::compareStrings($hash, $this->getData('x_SHA2_Hash'));
+        } elseif (!empty($this->getData('x_MD5_Hash'))) {
+            $hash = $this->generateHash($storedHash, $merchantApiLogin, $this->getXAmount(), $this->getXTransId());
+            return Security::compareStrings($hash, $this->getData('x_MD5_Hash'));
+        }
+
+        return false;
+    }
+
+    /**
      * Generates an Md5 hash to compare against AuthNet's.
      *
      * @param string $merchantMd5
@@ -24,33 +49,8 @@ class Response extends AuthorizenetResponse
      */
     public function generateHash($merchantMd5, $merchantApiLogin, $amount, $transactionId)
     {
-            return strtoupper(md5($merchantMd5 . $merchantApiLogin . $transactionId . $amount));
+        return strtoupper(md5($merchantMd5 . $merchantApiLogin . $transactionId . $amount));
     }
-
-    /**
-     * Return if is valid order id.
-     *
-     * @param string $storedHash
-     * @param string $merchantApiLogin
-     * @return bool
-     */
-    public function isValidHash($storedHash, $merchantApiLogin)
-    {
-        if (empty($this->getData('x_amount'))) {
-        $this->setData('x_amount', '0.00');
-        }
-
-        if (!empty($this->getData('x_SHA2_Hash'))) {
-        $hash = $this->generateSha2Hash($storedHash);
-        return Security::compareStrings($hash, $this->getData('x_SHA2_Hash'));
-        } elseif (!empty($this->getData('x_MD5_Hash'))) {
-        $hash = $this->generateHash($storedHash, $merchantApiLogin, $this->getXAmount(), $this->getXTransId());
-        return Security::compareStrings($hash, $this->getData('x_MD5_Hash'));
-        }
-
-        return false;
-    }
-
 
     /**
      * Return if this is approved response from Authorize.net auth request.
@@ -61,6 +61,7 @@ class Response extends AuthorizenetResponse
     {
         return $this->getXResponseCode() == \Magento\Authorizenet\Model\Directpost::RESPONSE_CODE_APPROVED;
     }
+
 
     /**
      * Generates an SHA2 hash to compare against AuthNet's.
